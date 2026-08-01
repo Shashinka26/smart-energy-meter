@@ -1,0 +1,49 @@
+{
+  "project_info": {
+    "project_number": "847200190687",
+    "firebase_url": "https://smart-energy-meter-266d8-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "smart-energy-meter-266d8",
+    "storage_bucket": "smart-energy-meter-266d8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:847200190687:android:f528994de9dadd7823e96a",
+        "android_client_info": {
+          "package_name": "com.example.smart_energy_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBpjZaiSmuDNKVoU1P_zeMrG9HxjMtC0xg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:847200190687:android:1974ed29d42f00a223e96a",
+        "android_client_info": {
+          "package_name": "com.smartenergy.smartenergyapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBpjZaiSmuDNKVoU1P_zeMrG9HxjMtC0xg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
