@@ -14,4 +14,13 @@ class FirebaseService {
   Future<void> relayOff() async {
     await _db.child("relay").set(false);
   }
+
+  Future<void> setScheduleMode(String mode) async {
+    await _db.child("scheduleMode").set(mode);
+  }
+
+  Future<String> getScheduleMode() async {
+    final snapshot = await _db.child("scheduleMode").get();
+    return snapshot.value?.toString() ?? "manual";
+  }
 }

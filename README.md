@@ -1,204 +1,107 @@
-# ⚡ Smart Energy Meter
+# Smart Energy Meter
 
-A smart energy monitoring mobile application built with **Flutter**, **Firebase Realtime Database**, and **ESP32** for real-time electricity monitoring and analytics.
+Final year IoT project for live electricity monitoring, **ML bill prediction**, smart scheduling, and mobile control. Built with **Flutter**, **Firebase Realtime Database**, **ESP32**, and **Python ML backend**.
 
-## 🚀 Overview
+## Project Structure
 
-Smart Energy Meter is an IoT-based mobile application designed to monitor electrical energy data in real time.
-
-The system combines an **ESP32** device with **Firebase Realtime Database** to collect and synchronize energy readings, while the Flutter mobile application provides a clean dashboard and analytics interface for users to monitor energy consumption.
-
-## ✨ Features
-
-* ⚡ Real-time energy monitoring
-* 📊 Interactive dashboard
-* 📈 Energy analytics screen
-* 🔄 Firebase Realtime Database integration
-* 📱 Responsive Flutter mobile UI
-* 🧩 Reusable Energy Card widget
-* 🧭 Bottom navigation interface
-* 🌐 IoT communication using ESP32
-
-## 🛠️ Technology Stack
-
-### Mobile Application
-
-* Flutter
-* Dart
-
-### Backend / Cloud
-
-* Firebase Realtime Database
-* Firebase Core
-
-### IoT
-
-* ESP32
-
-### Development Tools
-
-* Git
-* GitHub
-* Android Studio
-* VS Code
-
-## 📁 Project Structure
-
-```text
-smart-energy-meter/
-│
-├── android/
-├── ios/
-├── lib/
-│   │
-│   ├── screens/
-│   │   ├── analytics_screen.dart
-│   │   ├── dashboard_screen.dart
-│   │   └── main_navigation_screen.dart
-│   │
-│   ├── services/
-│   │   └── firebase_service.dart
-│   │
-│   ├── widgets/
-│   │   └── energy_card.dart
-│   │
-│   ├── firebase_options.dart
-│   └── main.dart
-│
-├── test/
-├── web/
-├── windows/
-├── linux/
-├── macos/
-├── pubspec.yaml
-├── firebase.json
-└── README.md
+```
+smart_energy_app/          Flutter mobile app
+ml_backend/                Python ML training + Flask API
+iot_firmware/              ESP32 + PZEM + Relay firmware
+assets/ml_model.json       Exported Linear Regression coefficients
 ```
 
-## 📱 Application Screens
+## Features
 
-### Dashboard
+- Live monitoring: voltage, current, power, energy, frequency, power factor
+- ML bill prediction from live sensor readings
+- Rule-based schedule model with peak/off-peak tariff advice
+- Auto/manual relay control through Firebase
+- Dashboard, Analytics, Schedule, Profile screens
+- Firebase Realtime Database as the cloud layer
 
-The dashboard provides an overview of the latest energy monitoring information using reusable energy cards.
+## Technology Stack
 
-### Analytics
+| Layer | Tools |
+|-------|-------|
+| Mobile | Flutter, Dart |
+| Cloud | Firebase Realtime Database |
+| IoT | ESP32, PZEM-004T, Relay |
+| ML | Python, scikit-learn, Flask |
 
-The analytics screen is designed to visualize and analyze energy consumption data retrieved from Firebase.
-
-### Navigation
-
-The application uses a dedicated main navigation screen to switch between dashboard and analytics sections seamlessly.
-
-## 🔥 Firebase Integration
-
-Firebase Realtime Database is used as the cloud data source for synchronizing smart energy meter readings with the mobile application.
-
-The Firebase service layer is implemented inside:
-
-```text
-lib/services/firebase_service.dart
-```
-
-This keeps Firebase communication separated from the UI for better code organization.
-
-## 🧩 Reusable Widget
-
-The project includes a reusable widget for displaying energy information.
-
-```text
-lib/widgets/energy_card.dart
-```
-
-This component is used to create consistent energy data cards across the application interface.
-
-## ⚙️ Getting Started
-
-### Prerequisites
-
-Make sure you have installed:
-
-* Flutter SDK
-* Dart SDK
-* Android Studio or VS Code
-* Git
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/Shashinka26/smart-energy-meter.git
-cd smart-energy-meter
-```
-
-### 2. Install Dependencies
+## Flutter App Setup
 
 ```bash
 flutter pub get
-```
-
-### 3. Configure Firebase
-
-Make sure Firebase is configured correctly for your environment.
-
-The project already contains:
-
-```text
-firebase_options.dart
-firebase.json
-```
-
-Use your own Firebase project configuration if required.
-
-### 4. Run the Application
-
-```bash
 flutter run
 ```
 
-## 📊 Architecture
+Release APK:
 
-The application follows a simple layered structure.
-
-```text
-ESP32 Device
-      │
-      ▼
-Firebase Realtime Database
-      │
-      ▼
-Firebase Service
-      │
-      ▼
-Flutter Screens
-      │
-      ├── Dashboard
-      ├── Analytics
-      └── Navigation
+```bash
+flutter build apk --release
 ```
 
-## 🎯 Future Improvements
+## ML Backend Setup
 
-* 🔔 Energy usage notifications
-* 📅 Historical consumption reports
-* 📉 Advanced analytics and charts
-* 👤 User authentication
-* 🌙 Dark mode improvements
-* ⚡ Multiple smart meter support
+```bash
+cd ml_backend
+pip install -r requirements.txt
+python train_model.py
+python backend.py
+```
 
-## 🤝 Contributing
+Training generates:
 
-Contributions, suggestions, and improvements are welcome.
+- `ml_backend/bill_model.pkl`
+- `assets/ml_model.json` for on-device prediction in the app
 
-Feel free to fork this repository and submit a pull request.
+Optional backend URL for the app:
 
-## 👨‍💻 Author
+```bash
+flutter run --dart-define=ML_BACKEND_URL=http://192.168.x.x:5000
+```
+
+## ESP32 Firmware
+
+1. Open `iot_firmware/correct.ino` in Arduino IDE
+2. Install libraries: PZEM004Tv30, Adafruit SSD1306, ArduinoJson
+3. Update WiFi credentials
+4. Upload to ESP32
+
+## Firebase Nodes
+
+```
+SmartMeter/      live readings + relay + scheduleMode
+Schedules/       user automation rules
+UsageHistory/    historical power samples for schedule analysis
+```
+
+## Architecture
+
+```
+ESP32 + PZEM + Relay
+        │
+        ▼
+Firebase Realtime Database
+        │
+        ├── Flutter App (Dashboard, Analytics, Schedule, Profile)
+        └── ML Backend (optional Flask API)
+```
+
+## Demo Flow
+
+1. Power ESP32 and confirm Firebase live data
+2. Open Dashboard for real-time readings
+3. Open Analytics for ML bill prediction
+4. Create schedule and enable Auto mode
+5. Show Profile and system overview
+
+## Author
 
 **Chamidu Shashinka Rathnasiri**
 
-Software Developer
+- GitHub: https://github.com/Shashinka26
+- LinkedIn: https://www.linkedin.com/in/chamidu-shashinka-947709361
 
-* GitHub: https://github.com/Shashinka26
-* LinkedIn: https://www.linkedin.com/in/chamidu-shashinka-947709361
-
----
-
-
+Repository: https://github.com/Shashinka26/smart-energy-meter.git

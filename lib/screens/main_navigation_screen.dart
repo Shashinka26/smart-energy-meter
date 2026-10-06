@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_colors.dart';
+import 'ai_screen.dart';
 import 'analytics_screen.dart';
 import 'dashboard_screen.dart';
+import 'profile_screen.dart';
+import 'schedule_screen.dart';
 
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
@@ -22,87 +26,60 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     _pages = [
       DashboardScreen(),
       const AnalyticsScreen(),
-      const _ComingSoonScreen(
-        title: 'AI Prediction',
-        icon: Icons.psychology_outlined,
-      ),
-      const _ComingSoonScreen(
-        title: 'Smart Schedule',
-        icon: Icons.calendar_month_outlined,
-      ),
-      const _ComingSoonScreen(title: 'Profile', icon: Icons.person_outline),
+      const AiScreen(),
+      const ScheduleScreen(),
+      const ProfileScreen(),
     ];
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(index: _selectedIndex, children: _pages),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        backgroundColor: const Color(0xFF111A16),
-        indicatorColor: Colors.green.withOpacity(0.25),
-        onDestinationSelected: (index) {
-          setState(() {
-            _selectedIndex = index;
-          });
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.dashboard_outlined),
-            selectedIcon: Icon(Icons.dashboard_rounded),
-            label: 'Dashboard',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.analytics_outlined),
-            selectedIcon: Icon(Icons.analytics_rounded),
-            label: 'Analytics',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.psychology_outlined),
-            selectedIcon: Icon(Icons.psychology_rounded),
-            label: 'AI',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.calendar_month_outlined),
-            selectedIcon: Icon(Icons.calendar_month_rounded),
-            label: 'Schedule',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Profile',
-          ),
-        ],
+      body: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 250),
+        child: IndexedStack(
+          key: ValueKey(_selectedIndex),
+          index: _selectedIndex,
+          children: _pages,
+        ),
       ),
-    );
-  }
-}
-
-class _ComingSoonScreen extends StatelessWidget {
-  final String title;
-  final IconData icon;
-
-  const _ComingSoonScreen({required this.title, required this.icon});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF09110D),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF09110D),
-        centerTitle: true,
-        title: Text(title),
-      ),
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 70, color: Colors.greenAccent),
-            const SizedBox(height: 18),
-            Text(
-              '$title module is coming next',
-              style: const TextStyle(color: Colors.white70, fontSize: 18),
+      bottomNavigationBar: Container(
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: AppColors.border(0.06))),
+        ),
+        child: NavigationBar(
+          selectedIndex: _selectedIndex,
+          height: 68,
+          onDestinationSelected: (index) {
+            setState(() {
+              _selectedIndex = index;
+            });
+          },
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.dashboard_outlined),
+              selectedIcon: Icon(Icons.dashboard_rounded),
+              label: 'Dashboard',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.analytics_outlined),
+              selectedIcon: Icon(Icons.analytics_rounded),
+              label: 'Analytics',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.psychology_outlined),
+              selectedIcon: Icon(Icons.psychology_rounded),
+              label: 'AI',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.calendar_month_outlined),
+              selectedIcon: Icon(Icons.calendar_month_rounded),
+              label: 'Schedule',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.person_outline),
+              selectedIcon: Icon(Icons.person),
+              label: 'Profile',
             ),
           ],
         ),
