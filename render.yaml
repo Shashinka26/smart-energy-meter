@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: smart-energy-chatbot-api
+    runtime: python
+    rootDir: smart_energy_chatbot_api
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT chatbot_api:app
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      - key: PYTHON_VERSION
+        value: "3.11.9"
