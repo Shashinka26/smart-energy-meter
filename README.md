@@ -66,9 +66,9 @@ flutter run --dart-define=ML_BACKEND_URL=http://192.168.x.x:5000
 ## ESP32 Firmware
 
 1. Open `iot_firmware/correct.ino` in Arduino IDE
-2. Install libraries: PZEM004Tv30, Adafruit SSD1306, ArduinoJson
-3. Update WiFi credentials
-4. Upload to ESP32
+2. Install libraries: PZEM004Tv30, Adafruit SSD1306, ArduinoJson, WiFiManager
+3. Upload to ESP32
+4. On first boot, connect to hotspot `SmartEnergy_Setup` and enter your WiFi details (see `iot_firmware/README.md`)
 
 ## Firebase Nodes
 

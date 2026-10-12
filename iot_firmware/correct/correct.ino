@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <WiFiManager.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -8,10 +9,11 @@
 #include <ArduinoJson.h>
 #include <time.h>
 
-#define WIFI_SSID "Pixel_5082"
-#define WIFI_PASSWORD "123321123"
-
 #define DATABASE_URL "https://smart-energy-meter-266d8-default-rtdb.asia-southeast1.firebasedatabase.app"
+
+#define WIFI_AP_NAME "SmartEnergy_Setup"
+#define WIFI_RESET_PIN 0
+#define WIFI_RESET_HOLD_MS 3000
 
 #define RELAY_PIN 26
 #define RELAY_ON HIGH
@@ -31,6 +33,7 @@ const int daylightOffset_sec = 0;
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 PZEM004Tv30 pzem(Serial2, PZEM_RX, PZEM_TX);
 WiFiClientSecure client;
+WiFiManager wifiManager;
 
 unsigned long lastUpload = 0;
 unsigned long lastWiFiTry = 0;
@@ -64,10 +67,64 @@ void connectWiFiNonBlock() {
   if (millis() - lastWiFiTry < 10000) return;
   lastWiFiTry = millis();
 
-  Serial.println("WiFi connecting...");
+  Serial.println("WiFi reconnecting...");
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin();
+}
+
+bool checkWiFiResetAtBoot() {
+  pinMode(WIFI_RESET_PIN, INPUT_PULLUP);
+
+  if (digitalRead(WIFI_RESET_PIN) != LOW) {
+    return false;
+  }
+
+  oled("WiFi Reset", "Hold BOOT", "3 seconds...");
+  Serial.println("BOOT held - hold 3s to reset WiFi");
+
+  unsigned long start = millis();
+  while (digitalRead(WIFI_RESET_PIN) == LOW) {
+    if (millis() - start >= WIFI_RESET_HOLD_MS) {
+      wifiManager.resetSettings();
+      oled("WiFi Cleared", "Restarting", "");
+      Serial.println("WiFi settings cleared");
+      delay(1000);
+      ESP.restart();
+    }
+    delay(50);
+  }
+
+  return false;
+}
+
+void setupWiFi() {
+  wifiManager.setConfigPortalTimeout(180);
+  wifiManager.setConnectTimeout(20);
+  wifiManager.setCaptivePortalEnable(true);
+
+  wifiManager.setAPCallback([](WiFiManager *wm) {
+    oled("WiFi Setup", "Connect to:", WIFI_AP_NAME);
+    Serial.println("Config portal started");
+    Serial.print("AP name: ");
+    Serial.println(WIFI_AP_NAME);
+    Serial.println("Open http://192.168.4.1 to configure");
+  });
+
+  oled("WiFi", "Connecting...", "");
+  Serial.println("Connecting to saved WiFi...");
+
+  if (!wifiManager.autoConnect(WIFI_AP_NAME)) {
+    oled("WiFi Failed", "Restarting", "");
+    Serial.println("WiFi setup failed - restarting");
+    delay(2000);
+    ESP.restart();
+  }
+
+  WiFi.setSleep(false);
+  oled("WiFi OK", WiFi.localIP().toString(), "");
+  Serial.print("WiFi connected: ");
+  Serial.println(WiFi.localIP());
 }
 
 void setupTime() {
@@ -372,16 +429,8 @@ void setup() {
   delay(1000);
   initPzemSerial();
 
-  WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-
-  Serial.println("\nWiFi connected");
+  checkWiFiResetAtBoot();
+  setupWiFi();
   setupTime();
 
   httpPutJson("/SmartMeter/scheduleMode.json", "\"manual\"");

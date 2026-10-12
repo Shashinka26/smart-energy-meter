@@ -13,14 +13,17 @@ Hardware:
 - Adafruit GFX
 - Adafruit SSD1306
 - ArduinoJson
+- WiFiManager (by tzapu) — install via **Sketch → Include Library → Manage Libraries**
 
 ## Configuration
 
 Update in `correct.ino`:
 
-- `WIFI_SSID`
-- `WIFI_PASSWORD`
 - `DATABASE_URL`
+
+WiFi credentials are **not** hard-coded. On first boot (or after reset), the ESP32 creates a hotspot named **`SmartEnergy_Setup`**. Connect with your phone, open the captive portal (or go to `http://192.168.4.1`), enter your WiFi SSID and password, and save. Credentials are stored in flash and reused on restart.
+
+To change WiFi later: **hold the BOOT button (GPIO 0) for 3 seconds while powering on** — settings are cleared and setup starts again.
 
 ## Upload (Arduino IDE)
 
