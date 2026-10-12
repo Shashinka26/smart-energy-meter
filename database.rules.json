@@ -1,0 +1,44 @@
+{
+  "rules": {
+    "Config": {
+      "ownerUid": {
+        ".read": true,
+        ".write": "!data.exists() && auth != null && newData.val() == auth.uid"
+      },
+      "connectedAppliance": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid == root.child('Config').child('ownerUid').val()"
+      }
+    },
+    "SmartMeter": {
+      ".read": "auth != null",
+      "relayCommand": {
+        ".write": "auth != null && auth.uid == root.child('Config').child('ownerUid').val()"
+      },
+      "scheduleMode": {
+        ".write": "auth != null && auth.uid == root.child('Config').child('ownerUid').val()"
+      },
+      "relay": {
+        ".write": "auth == null || (auth != null && auth.uid == root.child('Config').child('ownerUid').val())"
+      },
+      "voltage": { ".write": true },
+      "current": { ".write": true },
+      "power": { ".write": true },
+      "energy": { ".write": true },
+      "frequency": { ".write": true },
+      "powerFactor": { ".write": true }
+    },
+    "Schedules": {
+      ".read": "auth != null",
+      ".write": "auth != null && auth.uid == root.child('Config').child('ownerUid').val()"
+    },
+    "UsageHistory": {
+      ".read": "auth != null",
+      ".write": true
+    },
+    "BillingSettings": {
+      ".read": "auth != null",
+      ".write": "auth != null && auth.uid == root.child('Config').child('ownerUid').val()"
+    }
+  }
+}

@@ -1,18 +1,24 @@
+import 'dart:async';
+
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/appliance_config.dart';
+import '../services/appliance_settings_service.dart';
 import '../services/firebase_service.dart';
 import '../services/schedule_model_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/gradient_header_card.dart';
+import '../widgets/schedule_analysis_card.dart';
 import '../widgets/section_header.dart';
-import '../widgets/shimmer_loading.dart';
 
 class ScheduleScreen extends StatefulWidget {
-  const ScheduleScreen({super.key});
+  const ScheduleScreen({super.key, required this.isOwner});
+
+  final bool isOwner;
 
   @override
   State<ScheduleScreen> createState() => _ScheduleScreenState();
@@ -23,7 +29,17 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     'Schedules',
   );
   final FirebaseService _firebaseService = FirebaseService();
-  final ScheduleModelService _scheduleModelService = ScheduleModelService();
+  final ApplianceSettingsService _applianceSettings =
+      ApplianceSettingsService.instance;
+
+  StreamSubscription<DatabaseEvent>? _scheduleSubscription;
+  StreamSubscription<ApplianceType>? _applianceSubscription;
+  StreamSubscription<DatabaseEvent>? _scheduleModeSubscription;
+
+  List<MapEntry<dynamic, dynamic>> _schedules = [];
+  bool _schedulesLoaded = false;
+  ApplianceType _applianceType = ApplianceType.notSet;
+  bool _isAutoScheduleMode = false;
 
   final List<String> _repeatOptions = [
     'Once',
@@ -32,13 +48,74 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     'Weekends',
   ];
 
-  Stream<DatabaseEvent> get _scheduleStream => _scheduleRef.onValue;
+  @override
+  void initState() {
+    super.initState();
+    _scheduleSubscription = _scheduleRef.onValue.listen(
+      _handleScheduleUpdate,
+      onError: (_) {
+        if (mounted) {
+          setState(() => _schedulesLoaded = true);
+        }
+      },
+    );
+    _applianceSubscription = _applianceSettings.watchAppliance().listen(
+      (type) {
+        if (mounted) {
+          setState(() => _applianceType = type);
+        }
+      },
+    );
+    _applianceSettings.loadAppliance().then((type) {
+      if (mounted) {
+        setState(() => _applianceType = type);
+      }
+    });
+    _scheduleModeSubscription = FirebaseDatabase.instance
+        .ref('SmartMeter/scheduleMode')
+        .onValue
+        .listen((event) {
+      if (!mounted) {
+        return;
+      }
+
+      final mode = event.snapshot.value?.toString() ?? 'manual';
+      setState(() => _isAutoScheduleMode = mode == 'auto');
+    });
+  }
+
+  @override
+  void dispose() {
+    _scheduleSubscription?.cancel();
+    _applianceSubscription?.cancel();
+    _scheduleModeSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _handleScheduleUpdate(DatabaseEvent event) {
+    if (!mounted) {
+      return;
+    }
+
+    final value = event.snapshot.value;
+    setState(() {
+      _schedulesLoaded = true;
+      _schedules = value == null
+          ? <MapEntry<dynamic, dynamic>>[]
+          : Map<dynamic, dynamic>.from(value as Map).entries.toList();
+    });
+  }
 
   Future<void> _applySuggestion(ScheduleSuggestion suggestion) async {
+    final confirmed = await _confirmApplySuggestion(suggestion);
+    if (!confirmed || !mounted) {
+      return;
+    }
+
     final newSchedule = _scheduleRef.push();
 
     await newSchedule.set({
-      'name': 'Smart Suggested OFF',
+      'name': suggestion.scheduleName,
       'startHour': suggestion.suggestedStartHour,
       'startMinute': suggestion.suggestedStartMinute,
       'endHour': suggestion.suggestedEndHour,
@@ -57,6 +134,78 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         message: 'Suggested schedule applied. Auto mode enabled.',
       );
     }
+  }
+
+  Future<bool> _confirmApplySuggestion(ScheduleSuggestion suggestion) async {
+    final profile = ApplianceConfig.profileFor(suggestion.applianceType);
+    final applianceLabel =
+        suggestion.applianceType == ApplianceType.notSet
+            ? 'Connected appliance'
+            : profile.label;
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Apply Suggested Schedule?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _confirmRow('Appliance', applianceLabel),
+              _confirmRow('Action', 'Relay OFF'),
+              _confirmRow('Time', suggestion.peakHours),
+              _confirmRow('Repeat', 'Every Day'),
+              _confirmRow(
+                'Est. savings',
+                '~Rs. ${suggestion.estimatedMonthlySavings.toStringAsFixed(0)}/month',
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Schedule mode will switch to auto so ESP32 follows this schedule.',
+                style: TextStyle(color: AppColors.textSecondary, height: 1.4),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Apply'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return result ?? false;
+  }
+
+  Widget _confirmRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 92,
+            child: Text(
+              label,
+              style: const TextStyle(color: AppColors.textSecondary),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showAddScheduleDialog() async {
@@ -233,205 +382,299 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     }
   }
 
+  Future<void> _saveAppliance(ApplianceType type) async {
+    HapticFeedback.selectionClick();
+
+    setState(() => _applianceType = type);
+
+    try {
+      await _applianceSettings.saveAppliance(type);
+
+      if (!mounted) {
+        return;
+      }
+
+      AppSnackbar.show(
+        context,
+        message: type == ApplianceType.notSet
+            ? 'Appliance selection cleared'
+            : '${ApplianceConfig.profileFor(type).label} selected',
+      );
+    } catch (error) {
+      final restored = await _applianceSettings.loadAppliance();
+      if (!mounted) {
+        return;
+      }
+
+      setState(() => _applianceType = restored);
+      AppSnackbar.error(
+        context,
+        'Could not save appliance. Check your connection and try again.',
+      );
+    }
+  }
+
+  Future<void> _showAppliancePicker(ApplianceType selectedAppliance) async {
+    if (!widget.isOwner) {
+      return;
+    }
+
+    final sheetHeight = MediaQuery.sizeOf(context).height * 0.78;
+
+    final picked = await showModalBottomSheet<ApplianceType>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      barrierColor: Colors.black54,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: SizedBox(
+            height: sheetHeight,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 12),
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.border(0.2),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Text(
+                    'Select Connected Appliance',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                Expanded(
+                  child: ListView(
+                    physics: const BouncingScrollPhysics(),
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.device_unknown_outlined),
+                        title: const Text('Not set'),
+                        trailing: selectedAppliance == ApplianceType.notSet
+                            ? const Icon(Icons.check_circle, color: AppColors.primary)
+                            : null,
+                        onTap: () =>
+                            Navigator.pop(sheetContext, ApplianceType.notSet),
+                      ),
+                      for (final category in ApplianceConfig.categories) ...[
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
+                          child: Text(
+                            category,
+                            style: const TextStyle(
+                              color: AppColors.textMuted,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                        ...ApplianceConfig.profilesInCategory(category).map(
+                          (profile) => ListTile(
+                            leading: Icon(profile.icon, color: AppColors.primary),
+                            title: Text(profile.label),
+                            trailing: selectedAppliance == profile.type
+                                ? const Icon(
+                                    Icons.check_circle,
+                                    color: AppColors.primary,
+                                  )
+                                : null,
+                            onTap: () =>
+                                Navigator.pop(sheetContext, profile.type),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 24),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (picked != null) {
+      await _saveAppliance(picked);
+    }
+  }
+
   String _formatTime(Map<dynamic, dynamic> data, String prefix) {
     final hour = (data['${prefix}Hour'] ?? 0) as int;
     final minute = (data['${prefix}Minute'] ?? 0) as int;
     return TimeOfDay(hour: hour, minute: minute).format(context);
   }
 
-  Widget _buildAnalysisCard() {
-    return FutureBuilder<ScheduleSuggestion?>(
-      future: _scheduleModelService.analyzeUsage(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const SizedBox(height: 100, child: ShimmerLoading(itemCount: 1));
-        }
+  Widget _buildApplianceCard(ApplianceType selectedAppliance) {
+    final profile = ApplianceConfig.profileFor(selectedAppliance);
 
-        final suggestion = snapshot.data;
-
-        if (suggestion == null) {
-          return Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: AppColors.border(0.06)),
-            ),
-            child: const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.insights_rounded, color: AppColors.primary),
-                    SizedBox(width: 8),
-                    Text(
-                      'Usage Analysis',
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-                    ),
-                  ],
-                ),
-                SizedBox(height: 10),
-                Text(
-                  'Collecting usage history from your smart meter. '
-                  'Check back after a few hours for schedule suggestions.',
-                  style: TextStyle(color: AppColors.textSecondary, height: 1.4),
-                ),
-              ],
-            ),
-          );
-        }
-
-        return Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.insights_rounded, color: AppColors.primary),
-                  SizedBox(width: 8),
-                  Text(
-                    'Usage Analysis',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              _analysisRow(
-                'Peak usage',
-                '${suggestion.peakHours} (${suggestion.peakAveragePower.toStringAsFixed(1)} W avg)',
-              ),
-              const SizedBox(height: 8),
-              _analysisRow(
-                'Low usage',
-                '${suggestion.lowHours} (${suggestion.lowAveragePower.toStringAsFixed(1)} W avg)',
-              ),
-              const SizedBox(height: 14),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.tint(AppColors.primary, 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-              Text(
-                'Suggested OFF: ${suggestion.peakHours}',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                suggestion.tariffAdvice,
-                style: const TextStyle(color: AppColors.textSecondary, height: 1.4),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                suggestion.applianceAdvice,
-                style: const TextStyle(color: AppColors.textSecondary, height: 1.4),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Save ~Rs. ${suggestion.estimatedMonthlySavings.toStringAsFixed(0)}/month',
-                style: const TextStyle(color: AppColors.primary),
-              ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 14),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: () => _applySuggestion(suggestion),
-                  icon: const Icon(Icons.auto_fix_high),
-                  label: const Text('Apply Suggestion'),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _analysisRow(String label, String value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 90,
-          child: Text(label, style: const TextStyle(color: AppColors.textSecondary)),
-        ),
-        Expanded(child: Text(value)),
-      ],
-    );
-  }
-
-  Widget _buildModeCard() {
-    return StreamBuilder<DatabaseEvent>(
-      stream: FirebaseDatabase.instance.ref('SmartMeter/scheduleMode').onValue,
-      builder: (context, snapshot) {
-        final mode = snapshot.data?.snapshot.value?.toString() ?? 'manual';
-        final isAuto = mode == 'auto';
-
-        return Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: (isAuto ? AppColors.primary : AppColors.info).withValues(alpha: 0.2),
-            ),
-          ),
-          child: Row(
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
               Container(
                 width: 44,
                 height: 44,
                 decoration: BoxDecoration(
-                  color: AppColors.tint(isAuto ? AppColors.primary : AppColors.info, 0.14),
+                  color: AppColors.tint(AppColors.primary, 0.14),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(
-                  isAuto ? Icons.auto_mode_rounded : Icons.touch_app_outlined,
-                  color: isAuto ? AppColors.primary : AppColors.info,
-                ),
+                child: Icon(profile.icon, color: AppColors.primary),
               ),
               const SizedBox(width: 12),
-              Expanded(
+              const Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Schedule Mode',
+                    Text(
+                      'Connected Appliance',
                       style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                     ),
                     Text(
-                      isAuto
-                          ? 'ESP32 follows your schedules automatically'
-                          : 'Relay controlled manually from Dashboard',
-                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                      'Select what is plugged into the smart plug',
+                      style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
                     ),
                   ],
                 ),
               ),
-              Switch(
-                value: isAuto,
-                onChanged: (value) {
-                  HapticFeedback.lightImpact();
-                  _firebaseService.setScheduleMode(value ? 'auto' : 'manual');
-                },
-              ),
             ],
           ),
-        );
-      },
+          const SizedBox(height: 14),
+          Material(
+            color: AppColors.surfaceLight,
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: widget.isOwner
+                  ? () => _showAppliancePicker(selectedAppliance)
+                  : null,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                child: Row(
+                  children: [
+                    const Icon(Icons.power_outlined, color: AppColors.primary),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Appliance type',
+                            style: TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            profile.label,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (widget.isOwner)
+                      const Icon(
+                        Icons.unfold_more_rounded,
+                        color: AppColors.textSecondary,
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (!widget.isOwner) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'View-only account — only the owner can change the appliance.',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModeCard() {
+    final isAuto = _isAutoScheduleMode;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: (isAuto ? AppColors.primary : AppColors.info).withValues(alpha: 0.2),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.tint(isAuto ? AppColors.primary : AppColors.info, 0.14),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              isAuto ? Icons.auto_mode_rounded : Icons.touch_app_outlined,
+              color: isAuto ? AppColors.primary : AppColors.info,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Schedule Mode',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                ),
+                Text(
+                  isAuto
+                      ? 'ESP32 follows your schedules automatically'
+                      : 'Relay controlled manually from Dashboard',
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: isAuto,
+            onChanged: widget.isOwner
+                ? (value) {
+                    HapticFeedback.lightImpact();
+                    setState(() => _isAutoScheduleMode = value);
+                    _firebaseService.setScheduleMode(
+                      value ? 'auto' : 'manual',
+                    );
+                  }
+                : null,
+          ),
+        ],
+      ),
     );
   }
 
@@ -439,72 +682,66 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Smart Schedule')),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddScheduleDialog,
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('Add'),
-      ),
-      body: StreamBuilder<DatabaseEvent>(
-        stream: _scheduleStream,
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return const EmptyState(
-              icon: Icons.error_outline_rounded,
-              title: 'Unable to Load',
-              description: 'Could not load schedules from Firebase.',
-            );
-          }
-
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Padding(
-              padding: EdgeInsets.all(18),
-              child: ShimmerLoading(itemCount: 4),
-            );
-          }
-
-          final value = snapshot.data?.snapshot.value;
-          final schedules = value == null
-              ? <MapEntry<dynamic, dynamic>>[]
-              : Map<dynamic, dynamic>.from(value as Map).entries.toList();
-
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-            children: [
-              const GradientHeaderCard(
-                icon: Icons.schedule_rounded,
-                title: 'Smart Energy Scheduling',
-                subtitle:
-                    'Analyze usage, create schedules, and let ESP32 control the relay to save cost.',
+      floatingActionButton: widget.isOwner
+          ? FloatingActionButton.extended(
+              onPressed: _showAddScheduleDialog,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Add'),
+            )
+          : null,
+      body: !_schedulesLoaded
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: CircularProgressIndicator(),
               ),
-              const SizedBox(height: 16),
-              _buildModeCard(),
-              const SizedBox(height: 16),
-              _buildAnalysisCard(),
-              const SizedBox(height: 20),
-              SectionHeader(
-                title: 'Your Schedules',
-                subtitle: schedules.isEmpty ? 'No schedules created yet' : '${schedules.length} active schedule(s)',
-              ),
-              const SizedBox(height: 12),
-              if (schedules.isEmpty)
-                EmptyState(
-                  icon: Icons.calendar_month_outlined,
-                  title: 'No schedules yet',
-                  description:
-                      'Create a schedule or apply a smart suggestion to control your relay automatically.',
-                  actionLabel: 'Create Schedule',
-                  onAction: _showAddScheduleDialog,
-                )
-              else
-                ...schedules.map((entry) {
-                  final id = entry.key.toString();
-                  final schedule = Map<dynamic, dynamic>.from(entry.value);
-                  return _scheduleCard(id, schedule);
-                }),
-            ],
-          );
-        },
-      ),
+            )
+          : ListView(
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+              children: [
+                const GradientHeaderCard(
+                  icon: Icons.schedule_rounded,
+                  title: 'Smart Energy Scheduling',
+                  subtitle:
+                      'Analyze usage, create schedules, and let ESP32 control the relay to save cost.',
+                ),
+                const SizedBox(height: 16),
+                _buildModeCard(),
+                const SizedBox(height: 16),
+                _buildApplianceCard(_applianceType),
+                const SizedBox(height: 16),
+                ScheduleAnalysisCard(
+                  applianceType: _applianceType,
+                  isOwner: widget.isOwner,
+                  onApply: _applySuggestion,
+                  onCreateManual: _showAddScheduleDialog,
+                ),
+                const SizedBox(height: 20),
+                SectionHeader(
+                  title: 'Your Schedules',
+                  subtitle: _schedules.isEmpty
+                      ? 'No schedules created yet'
+                      : '${_schedules.length} active schedule(s)',
+                ),
+                const SizedBox(height: 12),
+                if (_schedules.isEmpty)
+                  EmptyState(
+                    icon: Icons.calendar_month_outlined,
+                    title: 'No schedules yet',
+                    description:
+                        'Create a schedule or apply a smart suggestion to control your relay automatically.',
+                    actionLabel: widget.isOwner ? 'Create Schedule' : null,
+                    onAction: widget.isOwner ? _showAddScheduleDialog : null,
+                  )
+                else
+                  ..._schedules.map((entry) {
+                    final id = entry.key.toString();
+                    final schedule = Map<dynamic, dynamic>.from(entry.value);
+                    return _scheduleCard(id, schedule);
+                  }),
+              ],
+            ),
     );
   }
 
@@ -562,7 +799,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   ],
                 ),
               ),
-              Switch(value: enabled, onChanged: (v) => _toggleSchedule(id, v)),
+              Switch(
+                value: enabled,
+                onChanged: widget.isOwner
+                    ? (v) => _toggleSchedule(id, v)
+                    : null,
+              ),
             ],
           ),
           const SizedBox(height: 14),
@@ -572,11 +814,15 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               const SizedBox(width: 8),
               _infoChip(Icons.power_settings_new, 'Relay $action', actionColor),
               const Spacer(),
-              IconButton(
-                tooltip: 'Delete',
-                onPressed: () => _deleteSchedule(id),
-                icon: const Icon(Icons.delete_outline_rounded, color: AppColors.error),
-              ),
+              if (widget.isOwner)
+                IconButton(
+                  tooltip: 'Delete',
+                  onPressed: () => _deleteSchedule(id),
+                  icon: const Icon(
+                    Icons.delete_outline_rounded,
+                    color: AppColors.error,
+                  ),
+                ),
             ],
           ),
         ],

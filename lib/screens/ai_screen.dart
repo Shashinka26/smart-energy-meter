@@ -1,8 +1,6 @@
-import 'package:firebase_ai/firebase_ai.dart';
-import 'package:firebase_app_check/firebase_app_check.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 
+import '../services/energy_ai_service.dart';
 import '../theme/app_colors.dart';
 
 class AiScreen extends StatefulWidget {
@@ -15,18 +13,17 @@ class AiScreen extends StatefulWidget {
 class _AiScreenState extends State<AiScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-
-  late final GenerativeModel _model;
-  late final ChatSession _chat;
+  final EnergyAiService _aiService = EnergyAiService.instance;
 
   bool _aiReady = false;
   bool _isLoading = false;
+  String? _statusMessage;
 
   final List<Map<String, String>> _messages = [
     {
       'role': 'ai',
       'message':
-          'Hi! I am your Smart Energy AI Assistant. Ask me anything about your electricity usage, bill estimates, or energy saving tips.',
+          '👋 Hi! I\'m your Smart Energy Assistant.\nAsk about your bill, energy saving tips, or best times to use appliances. ⚡',
     },
   ];
 
@@ -36,22 +33,23 @@ class _AiScreenState extends State<AiScreen> {
     _initializeAi();
   }
 
-  void _initializeAi() {
-    try {
-      final ai = FirebaseAI.googleAI(
-        appCheck: FirebaseAppCheck.instance,
-        useLimitedUseAppCheckTokens: true,
-      );
+  Future<void> _initializeAi() async {
+    setState(() {
+      _aiReady = false;
+      _statusMessage = 'Connecting to AI...';
+    });
 
-      _model = ai.generativeModel(model: 'gemini-3.7-flash');
-      _chat = _model.startChat();
+    await _aiService.initialize();
 
-      if (mounted) {
-        setState(() => _aiReady = true);
-      }
-    } catch (e) {
-      debugPrint('AI initialization error: $e');
-    }
+    if (!mounted) return;
+
+    setState(() {
+      _aiReady = _aiService.isReady;
+      _statusMessage = _aiService.isReady
+          ? 'Connected (${_aiService.activeModel})'
+          : _aiService.initError ??
+              'Start START_CHATBOT.bat on your PC and use the same Wi-Fi.';
+    });
   }
 
   void _scrollToBottom() {
@@ -65,43 +63,13 @@ class _AiScreenState extends State<AiScreen> {
     });
   }
 
-  Future<Map<String, dynamic>> _getLiveEnergyData() async {
-    final snapshot = await FirebaseDatabase.instance.ref('SmartMeter').get();
-
-    if (!snapshot.exists || snapshot.value == null) {
-      throw Exception('No SmartMeter data found in Firebase.');
-    }
-
-    final data = Map<String, dynamic>.from(snapshot.value as Map);
-
-    return {
-      'voltage': data['voltage'] ?? 0,
-      'current': data['current'] ?? 0,
-      'power': data['power'] ?? 0,
-      'energy': data['energy'] ?? 0,
-      'frequency': data['frequency'] ?? 0,
-      'powerFactor': data['powerFactor'] ?? 0,
-      'relay': data['relay'] ?? false,
-    };
-  }
-
-  String _friendlyError(Object error) {
-    final text = error.toString();
-    if (text.contains('500') || text.contains('high demand')) {
-      return 'The AI service is busy right now. Please try again in a few moments.';
-    }
-    if (text.contains('network') || text.contains('SocketException')) {
-      return 'Network error. Check your internet connection and try again.';
-    }
-    return 'Something went wrong. Please try again.';
-  }
-
   Future<void> _sendMessage() async {
     if (!_aiReady) {
       setState(() {
         _messages.add({
           'role': 'ai',
-          'message': 'AI is still initializing. Please try again shortly.',
+          'message':
+              'AI is still connecting. Please wait a moment and try again.',
         });
       });
       _scrollToBottom();
@@ -120,46 +88,7 @@ class _AiScreenState extends State<AiScreen> {
     _scrollToBottom();
 
     try {
-      final energyData = await _getLiveEnergyData();
-
-      final prompt = '''
-You are the Smart Energy AI Assistant inside a smart electricity monitoring application.
-
-Your job is to analyze the user's electricity usage using the LIVE smart meter data provided below.
-
-LIVE SMART METER DATA:
-
-Voltage: ${energyData['voltage']} V
-Current: ${energyData['current']} A
-Power: ${energyData['power']} W
-Total Energy: ${energyData['energy']} kWh
-Frequency: ${energyData['frequency']} Hz
-Power Factor: ${energyData['powerFactor']}
-Relay Status: ${energyData['relay'] ? 'ON' : 'OFF'}
-
-The estimated electricity tariff used by this application is Rs. 45 per kWh.
-
-USER QUESTION:
-$text
-
-INSTRUCTIONS:
-
-1. Answer specifically about the user's smart energy data.
-2. Use the live values above when relevant.
-3. Do not invent sensor readings.
-4. Keep the answer easy to understand.
-5. If discussing the electricity bill, clearly mention that it is an estimate.
-6. If the user asks how to save energy, give practical actions.
-7. If a reading appears unusual, explain why it may be unusual.
-8. Do not claim to be a certified electrician.
-9. Keep the response concise but useful.
-10. Use Sri Lankan Rupees (Rs.) when discussing estimated cost.
-''';
-
-      final response = await _chat.sendMessage(Content.text(prompt));
-      final answer =
-          response.text ??
-          'I could not generate an answer right now. Please try again.';
+      final answer = await _aiService.sendMessage(text);
 
       if (!mounted) return;
 
@@ -175,7 +104,10 @@ INSTRUCTIONS:
       if (!mounted) return;
 
       setState(() {
-        _messages.add({'role': 'ai', 'message': _friendlyError(e)});
+        _messages.add({
+          'role': 'ai',
+          'message': _aiService.friendlyError(e),
+        });
         _isLoading = false;
       });
       _scrollToBottom();
@@ -209,9 +141,32 @@ INSTRUCTIONS:
             const Text('Energy AI'),
           ],
         ),
+        actions: [
+          if (!_aiReady)
+            IconButton(
+              tooltip: 'Retry AI connection',
+              onPressed: _initializeAi,
+              icon: const Icon(Icons.refresh_rounded),
+            ),
+        ],
       ),
       body: Column(
         children: [
+          if (_statusMessage != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: _aiReady
+                  ? AppColors.tint(AppColors.primary, 0.12)
+                  : AppColors.tint(Colors.orange, 0.12),
+              child: Text(
+                _statusMessage!,
+                style: TextStyle(
+                  color: _aiReady ? AppColors.primary : Colors.orange.shade200,
+                  fontSize: 12,
+                ),
+              ),
+            ),
           Expanded(
             child: ListView.builder(
               controller: _scrollController,

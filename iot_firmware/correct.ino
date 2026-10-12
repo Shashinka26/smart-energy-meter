@@ -9,7 +9,7 @@
 #include <time.h>
 
 #define WIFI_SSID "Pixel_5082"
-#define WIFI_PASSWORD "12332112"
+#define WIFI_PASSWORD "123321123"
 
 #define DATABASE_URL "https://smart-energy-meter-266d8-default-rtdb.asia-southeast1.firebasedatabase.app"
 
@@ -22,6 +22,7 @@
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
+#define RELAY_CHECK_INTERVAL 2000
 
 const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = 19800;
@@ -37,10 +38,16 @@ unsigned long lastScheduleCheck = 0;
 unsigned long lastHistoryUpload = 0;
 
 bool relayState = true;
+bool lastReportedRelay = true;
 String scheduleMode = "manual";
 bool timeSynced = false;
+bool oledReady = false;
 
 void oled(String a, String b = "", String c = "") {
+  if (!oledReady) {
+    return;
+  }
+
   display.clearDisplay();
   display.setCursor(0, 0);
   display.setTextSize(1);
@@ -118,6 +125,22 @@ bool httpPutJson(const String &path, const String &json) {
   http.addHeader("Content-Type", "application/json");
 
   int code = http.PUT(json);
+  http.end();
+
+  return code == 200;
+}
+
+bool httpPatchJson(const String &path, const String &json) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  client.setInsecure();
+  HTTPClient http;
+
+  String url = String(DATABASE_URL) + path;
+  http.begin(client, url);
+  http.addHeader("Content-Type", "application/json");
+
+  int code = http.PATCH(json);
   http.end();
 
   return code == 200;
@@ -230,13 +253,29 @@ void updateRelayControl() {
       relayState = true;
     }
   } else {
-    String relayPayload = httpGet("/SmartMeter/relay.json");
+    String relayPayload = httpGet("/SmartMeter/relayCommand.json");
     if (relayPayload.length() > 0 && relayPayload != "null") {
-      relayState = parseBoolValue(relayPayload);
+      bool newState = parseBoolValue(relayPayload);
+      if (newState != relayState) {
+        Serial.println(newState ? "Relay ON (app command)" : "Relay OFF (app command)");
+      }
+      relayState = newState;
+    }
+
+    if (relayState != lastReportedRelay) {
+      String json = "{\"relay\":" + String(relayState ? "true" : "false") + "}";
+      httpPatchJson("/SmartMeter.json", json);
+      lastReportedRelay = relayState;
     }
   }
 
   digitalWrite(RELAY_PIN, relayState ? RELAY_ON : RELAY_OFF);
+
+  if (scheduleMode == "auto" && relayState != lastReportedRelay) {
+    String json = "{\"relay\":" + String(relayState ? "true" : "false") + "}";
+    httpPatchJson("/SmartMeter.json", json);
+    lastReportedRelay = relayState;
+  }
 }
 
 bool readPZEM(float &v, float &i, float &p, float &e, float &f, float &pf) {
@@ -272,12 +311,10 @@ void uploadFirebase(float v, float i, float p, float e, float f, float pf) {
   json += "\"power\":" + String(p, 2) + ",";
   json += "\"energy\":" + String(e, 3) + ",";
   json += "\"frequency\":" + String(f, 2) + ",";
-  json += "\"powerFactor\":" + String(pf, 2) + ",";
-  json += "\"relay\":" + String(relayState ? "true" : "false") + ",";
-  json += "\"scheduleMode\":\"" + scheduleMode + "\"";
+  json += "\"powerFactor\":" + String(pf, 2);
   json += "}";
 
-  bool ok = httpPutJson("/SmartMeter.json", json);
+  bool ok = httpPatchJson("/SmartMeter.json", json);
 
   Serial.print("Firebase upload: ");
   Serial.println(ok ? "OK" : "FAILED");
@@ -306,24 +343,34 @@ void uploadUsageHistory(float power, float energy) {
   Serial.println("Usage history saved");
 }
 
+void initPzemSerial() {
+  // Release UART pins before starting Serial2 (reduces boot/upload interference).
+  pinMode(PZEM_RX, INPUT);
+  pinMode(PZEM_TX, INPUT);
+  delay(50);
+  Serial2.end();
+  delay(50);
+  Serial2.begin(9600, SERIAL_8N1, PZEM_RX, PZEM_TX);
+}
+
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  delay(2000);
 
   pinMode(RELAY_PIN, OUTPUT);
   digitalWrite(RELAY_PIN, RELAY_ON);
 
   Wire.begin(21, 22);
 
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println("OLED Failed");
-    while (1);
+  if (display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    oledReady = true;
+    oled("Smart Energy", "Relay ON", "PZEM starting");
+  } else {
+    Serial.println("OLED not found - continuing without display");
   }
 
-  oled("Smart Energy", "Relay ON", "PZEM starting");
-  delay(5000);
-
-  Serial2.begin(9600, SERIAL_8N1, PZEM_RX, PZEM_TX);
+  delay(1000);
+  initPzemSerial();
 
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
@@ -349,7 +396,7 @@ void loop() {
     setupTime();
   }
 
-  if (millis() - lastScheduleCheck > 30000) {
+  if (millis() - lastScheduleCheck > RELAY_CHECK_INTERVAL) {
     updateRelayControl();
     lastScheduleCheck = millis();
   }
@@ -382,32 +429,34 @@ void loop() {
   Serial.print("Mode: "); Serial.println(scheduleMode);
   Serial.print("WiFi: "); Serial.println(WiFi.status() == WL_CONNECTED ? "OK" : "NO");
 
-  display.clearDisplay();
-  display.setCursor(0, 0);
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
+  if (oledReady) {
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
 
-  display.println("Smart Energy");
-  display.print("WiFi:");
-  display.println(WiFi.status() == WL_CONNECTED ? "OK" : "NO");
-  display.print("Mode:");
-  display.println(scheduleMode == "auto" ? "AUTO" : "MAN");
-  display.print("Relay:");
-  display.println(relayState ? "ON" : "OFF");
+    display.println("Smart Energy");
+    display.print("WiFi:");
+    display.println(WiFi.status() == WL_CONNECTED ? "OK" : "NO");
+    display.print("Mode:");
+    display.println(scheduleMode == "auto" ? "AUTO" : "MAN");
+    display.print("Relay:");
+    display.println(relayState ? "ON" : "OFF");
 
-  display.print("V:");
-  display.print(voltage, 1);
-  display.println("V");
+    display.print("V:");
+    display.print(voltage, 1);
+    display.println("V");
 
-  display.print("P:");
-  display.print(power, 1);
-  display.println("W");
+    display.print("P:");
+    display.print(power, 1);
+    display.println("W");
 
-  display.print("E:");
-  display.print(energy, 3);
-  display.println("kWh");
+    display.print("E:");
+    display.print(energy, 3);
+    display.println("kWh");
 
-  display.display();
+    display.display();
+  }
 
   if (millis() - lastUpload > 10000) {
     uploadFirebase(voltage, current, power, energy, freq, pf);

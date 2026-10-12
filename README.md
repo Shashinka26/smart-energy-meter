@@ -16,7 +16,8 @@ assets/ml_model.json       Exported Linear Regression coefficients
 - Live monitoring: voltage, current, power, energy, frequency, power factor
 - ML bill prediction from live sensor readings
 - Rule-based schedule model with peak/off-peak tariff advice
-- Auto/manual relay control through Firebase
+- Owner-only relay control with Firebase Authentication
+- Viewer accounts can monitor but cannot control the relay
 - Dashboard, Analytics, Schedule, Profile screens
 - Firebase Realtime Database as the cloud layer
 
@@ -72,10 +73,13 @@ flutter run --dart-define=ML_BACKEND_URL=http://192.168.x.x:5000
 ## Firebase Nodes
 
 ```
-SmartMeter/      live readings + relay + scheduleMode
+Config/ownerUid  registered device owner (set once)
+SmartMeter/      live readings + relay + relayCommand + scheduleMode
 Schedules/       user automation rules
 UsageHistory/    historical power samples for schedule analysis
 ```
+
+See [AUTH_SETUP.md](AUTH_SETUP.md) for login, owner registration, and security rules deployment.
 
 ## Architecture
 

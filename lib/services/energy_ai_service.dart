@@ -8,11 +8,12 @@ class EnergyAiService {
 
   static final EnergyAiService instance = EnergyAiService._();
 
-  // Cloud API (Render) — always available, no PC needed.
-  // Override at build time: --dart-define=CHATBOT_API_URL=https://your-url.onrender.com
+  // Local Groq server on your PC (port 5001).
+  // Android emulator: http://10.0.2.2:5001
+  // Physical phone: use your PC Wi-Fi IP from ipconfig (e.g. 10.113.220.30).
   static const String _baseUrl = String.fromEnvironment(
     'CHATBOT_API_URL',
-    defaultValue: 'https://smart-energy-chatbot-api.onrender.com',
+    defaultValue: 'http://10.113.220.30:5001',
   );
 
   bool _ready = false;
@@ -26,7 +27,7 @@ class EnergyAiService {
     try {
       final response = await http
           .get(Uri.parse('$_baseUrl/health'))
-          .timeout(const Duration(seconds: 20));
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         _ready = true;
@@ -75,7 +76,10 @@ class EnergyAiService {
         text.contains('connection refused') ||
         text.contains('timed out') ||
         text.contains('failed host lookup')) {
-      return 'Cannot reach the chatbot server. Check your internet connection. If this is the first request after idle, wait 30 seconds and try again.';
+      return 'Cannot connect to chatbot server.\n\n'
+          '1. Run START_CHATBOT.bat on your PC\n'
+          '2. Phone and PC on same Wi-Fi\n'
+          '3. Check PC IP matches the app (currently 10.113.220.30)';
     }
 
     return 'The AI assistant could not respond right now. Please try again.';

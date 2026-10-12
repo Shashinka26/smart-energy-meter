@@ -11,8 +11,9 @@ import '../widgets/section_header.dart';
 import '../widgets/shimmer_loading.dart';
 
 class DashboardScreen extends StatelessWidget {
-  DashboardScreen({super.key});
+  DashboardScreen({super.key, required this.isOwner});
 
+  final bool isOwner;
   final FirebaseService firebaseService = FirebaseService();
 
   double readNumber(Map<dynamic, dynamic> data, String key) {
@@ -161,6 +162,10 @@ class DashboardScreen extends StatelessWidget {
                             ],
                           ),
                           const SizedBox(height: 24),
+                          if (!isOwner) ...[
+                            _buildViewerBanner(),
+                            const SizedBox(height: 14),
+                          ],
                           _buildScheduleModeBanner(isAutoMode),
                           const SizedBox(height: 14),
                           _buildRelayControl(context, relayOn, isAutoMode),
@@ -253,6 +258,30 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 
+  Widget _buildViewerBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: AppColors.tint(AppColors.warning, 0.12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.warning.withValues(alpha: 0.25)),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.visibility_outlined, color: AppColors.warning),
+          SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'View-only account — relay control is restricted to the owner.',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildScheduleModeBanner(bool isAutoMode) {
     return Container(
       width: double.infinity,
@@ -323,7 +352,9 @@ class DashboardScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  isAutoMode
+                  !isOwner
+                      ? 'Only the owner can control the relay'
+                      : isAutoMode
                       ? 'Switch to Manual on Schedule screen'
                       : relayOn
                       ? 'Connected appliance is ON'
@@ -335,14 +366,22 @@ class DashboardScreen extends StatelessWidget {
           ),
           Switch(
             value: relayOn,
-            onChanged: isAutoMode
+            onChanged: !isOwner || isAutoMode
                 ? null
                 : (value) async {
                     HapticFeedback.lightImpact();
-                    if (value) {
-                      await firebaseService.relayOn();
-                    } else {
-                      await firebaseService.relayOff();
+                    try {
+                      if (value) {
+                        await firebaseService.relayOn();
+                      } else {
+                        await firebaseService.relayOff();
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(e.toString())),
+                        );
+                      }
                     }
                   },
           ),
@@ -351,15 +390,43 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 
+  List<String> _healthIssues({
+    required double voltage,
+    required double frequency,
+    required double powerFactor,
+  }) {
+    final issues = <String>[];
+
+    if (voltage < 200 || voltage > 250) {
+      issues.add(
+        'Voltage ${voltage.toStringAsFixed(1)} V — normal range is 200–250 V',
+      );
+    }
+    if (frequency < 49 || frequency > 51) {
+      issues.add(
+        'Frequency ${frequency.toStringAsFixed(1)} Hz — normal range is 49–51 Hz',
+      );
+    }
+    if (powerFactor < 0.8) {
+      issues.add(
+        'Power Factor ${powerFactor.toStringAsFixed(2)} — should be ≥ 0.80',
+      );
+    }
+
+    return issues;
+  }
+
   Widget _buildSystemStatus({
     required double voltage,
     required double frequency,
     required double powerFactor,
   }) {
-    final voltageNormal = voltage >= 200 && voltage <= 250;
-    final frequencyNormal = frequency >= 49 && frequency <= 51;
-    final powerFactorGood = powerFactor >= 0.8;
-    final allHealthy = voltageNormal && frequencyNormal && powerFactorGood;
+    final issues = _healthIssues(
+      voltage: voltage,
+      frequency: frequency,
+      powerFactor: powerFactor,
+    );
+    final allHealthy = issues.isEmpty;
 
     return Container(
       width: double.infinity,
@@ -373,6 +440,7 @@ class DashboardScreen extends StatelessWidget {
         ),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             width: 48,
@@ -401,12 +469,25 @@ class DashboardScreen extends StatelessWidget {
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  allHealthy
-                      ? 'Electrical conditions are normal'
-                      : 'Some values need attention',
-                  style: const TextStyle(color: AppColors.textSecondary),
-                ),
+                if (allHealthy)
+                  const Text(
+                    'Electrical conditions are normal',
+                    style: TextStyle(color: AppColors.textSecondary),
+                  )
+                else
+                  ...issues.map(
+                    (issue) => Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        issue,
+                        style: const TextStyle(
+                          color: AppColors.warning,
+                          fontSize: 13,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),

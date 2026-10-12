@@ -10,10 +10,12 @@ class AppSnackbar {
     required String message,
     IconData icon = Icons.check_circle_outline_rounded,
     Color? iconColor,
+    Duration duration = const Duration(seconds: 4),
   }) {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
+        duration: duration,
         content: Row(
           children: [
             Icon(icon, color: iconColor ?? AppColors.primary, size: 20),

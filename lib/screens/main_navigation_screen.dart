@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../services/usage_notification_service.dart';
 import '../theme/app_colors.dart';
+import '../widgets/app_snackbar.dart';
 import 'ai_screen.dart';
 import 'analytics_screen.dart';
 import 'dashboard_screen.dart';
@@ -8,7 +10,9 @@ import 'profile_screen.dart';
 import 'schedule_screen.dart';
 
 class MainNavigationScreen extends StatefulWidget {
-  const MainNavigationScreen({super.key});
+  const MainNavigationScreen({super.key, required this.isOwner});
+
+  final bool isOwner;
 
   @override
   State<MainNavigationScreen> createState() => _MainNavigationScreenState();
@@ -24,12 +28,29 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     super.initState();
 
     _pages = [
-      DashboardScreen(),
+      DashboardScreen(isOwner: widget.isOwner),
       const AnalyticsScreen(),
       const AiScreen(),
-      const ScheduleScreen(),
-      const ProfileScreen(),
+      ScheduleScreen(isOwner: widget.isOwner),
+      ProfileScreen(isOwner: widget.isOwner),
     ];
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkMonthlyUsageAlert();
+    });
+  }
+
+  Future<void> _checkMonthlyUsageAlert() async {
+    final message = await UsageNotificationService.instance.checkAndNotify();
+    if (!mounted || message == null) {
+      return;
+    }
+
+    AppSnackbar.show(
+      context,
+      message: message,
+      duration: const Duration(seconds: 6),
+    );
   }
 
   @override

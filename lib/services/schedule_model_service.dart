@@ -1,5 +1,8 @@
 import 'package:firebase_database/firebase_database.dart';
 
+import 'appliance_config.dart';
+import 'monthly_usage_service.dart';
+
 class ScheduleSuggestion {
   final String peakHours;
   final String lowHours;
@@ -12,6 +15,11 @@ class ScheduleSuggestion {
   final double estimatedMonthlySavings;
   final String tariffAdvice;
   final String applianceAdvice;
+  final ScheduleSuggestionKind kind;
+  final String suggestionTitle;
+  final String scheduleName;
+  final int dataDaysUsed;
+  final ApplianceType applianceType;
 
   const ScheduleSuggestion({
     required this.peakHours,
@@ -25,38 +33,36 @@ class ScheduleSuggestion {
     required this.estimatedMonthlySavings,
     required this.tariffAdvice,
     required this.applianceAdvice,
+    required this.kind,
+    required this.suggestionTitle,
+    required this.scheduleName,
+    required this.dataDaysUsed,
+    required this.applianceType,
   });
+
+  bool get canApply => kind == ScheduleSuggestionKind.schedulable;
 }
 
 class ScheduleModelService {
-  static const double highTariffPerKwh = 30;
-  static const double lowTariffPerKwh = 22;
-
   final DatabaseReference _historyRef = FirebaseDatabase.instance.ref(
     'UsageHistory',
   );
 
   String getTariff(int hour) {
-    if (hour >= 6 && hour <= 18) {
+    if (hour >= ApplianceConfig.dayTariffStartHour &&
+        hour <= ApplianceConfig.dayTariffEndHour) {
       return 'HIGH';
     }
     return 'LOW';
   }
 
-  String suggestApplianceUse(String appliance, int hour) {
-    if (getTariff(hour) == 'HIGH') {
-      return '$appliance: Avoid now (high tariff). Use after 6 PM to save cost.';
-    }
-    return '$appliance: Good time to use (low tariff).';
+  double estimateAvoidedCost(double kwh) {
+    return kwh * MonthlyUsageService.tariffPerKwh;
   }
 
-  double estimateSavings(double kwh) {
-    final normalCost = kwh * highTariffPerKwh;
-    final optimizedCost = kwh * lowTariffPerKwh;
-    return normalCost - optimizedCost;
-  }
-
-  Future<ScheduleSuggestion?> analyzeUsage() async {
+  Future<ScheduleSuggestion?> analyzeUsage({
+    ApplianceType applianceType = ApplianceType.notSet,
+  }) async {
     final snapshot = await _historyRef.get();
 
     if (!snapshot.exists || snapshot.value == null) {
@@ -67,6 +73,9 @@ class ScheduleModelService {
     if (dates.isEmpty) {
       return null;
     }
+
+    final dataDaysUsed = dates.length;
+    final profile = ApplianceConfig.profileFor(applianceType);
 
     final hourlyPower = <int, List<double>>{};
 
@@ -95,6 +104,25 @@ class ScheduleModelService {
 
     if (hourlyPower.isEmpty) {
       return null;
+    }
+
+    if (dataDaysUsed < ApplianceConfig.minimumDataDays) {
+      return _buildSuggestion(
+        profile: profile,
+        applianceType: applianceType,
+        dataDaysUsed: dataDaysUsed,
+        peakHour: hourlyPower.keys.first,
+        lowHour: hourlyPower.keys.first,
+        peakAvg: 0,
+        lowAvg: 0,
+        offDurationHours: ApplianceConfig.defaultOffWindowHours,
+        kind: ScheduleSuggestionKind.insufficientData,
+        tariffAdvice:
+            'Need at least ${ApplianceConfig.minimumDataDays} days of meter readings '
+            '(currently $dataDaysUsed day${dataDaysUsed == 1 ? '' : 's'}).',
+        applianceAdvice:
+            'Keep the smart plug connected. Suggestions appear after more usage history is collected.',
+      );
     }
 
     final hourlyAverage = <int, double>{};
@@ -130,25 +158,139 @@ class ScheduleModelService {
       peakAvg = highTariffHours.first.value;
     }
 
-    final suggestedStartHour = peakHour;
-    final suggestedEndHour = (peakHour + 3) % 24;
+    final offDurationHours = profile.useFullDayOffWindow
+        ? (ApplianceConfig.dayTariffEndHour - ApplianceConfig.dayTariffStartHour)
+        : ApplianceConfig.defaultOffWindowHours;
 
-    final savingsKwh = (peakAvg / 1000) * 3 * 30;
-    final estimatedSavings = estimateSavings(savingsKwh);
+    final suggestedStartHour = profile.useFullDayOffWindow
+        ? ApplianceConfig.dayTariffStartHour
+        : peakHour;
+    final suggestedEndHour = profile.useFullDayOffWindow
+        ? ApplianceConfig.dayTariffEndHour
+        : (peakHour + offDurationHours) % 24;
 
-    return ScheduleSuggestion(
-      peakHours: _formatHourRange(peakHour, 3),
-      lowHours: _formatHourRange(lowHour, 3),
-      peakAveragePower: peakAvg,
-      lowAveragePower: lowAvg,
+    final isHighTariffPeak = getTariff(peakHour) == 'HIGH';
+    final peakHoursLabel = profile.useFullDayOffWindow
+        ? _formatHourRange(
+            ApplianceConfig.dayTariffStartHour,
+            offDurationHours,
+          )
+        : _formatHourRange(peakHour, offDurationHours);
+
+    final isLowPowerAppliance = profile.typicalLowPower;
+    final isLowPowerReading =
+        peakAvg < ApplianceConfig.lowPowerSkipThresholdW;
+
+    if (applianceType != ApplianceType.notSet &&
+        (isLowPowerAppliance || isLowPowerReading)) {
+      final lowPowerMessage = isLowPowerAppliance
+          ? '${profile.label} is a low power device — auto scheduling saves little.'
+          : 'Peak usage is only ${peakAvg.toStringAsFixed(1)} W — scheduling will not save much.';
+
+      return _buildSuggestion(
+        profile: profile,
+        applianceType: applianceType,
+        dataDaysUsed: dataDaysUsed,
+        peakHour: peakHour,
+        lowHour: lowHour,
+        peakAvg: peakAvg,
+        lowAvg: lowAvg,
+        offDurationHours: offDurationHours,
+        suggestedStartHour: suggestedStartHour,
+        suggestedEndHour: suggestedEndHour,
+        peakHoursLabel: peakHoursLabel,
+        kind: ScheduleSuggestionKind.lowPower,
+        tariffAdvice: lowPowerMessage,
+        applianceAdvice: ApplianceConfig.adviceFor(
+          profile: profile,
+          peakHours: _formatHourRange(peakHour, offDurationHours),
+          peakHour: peakHour,
+          isHighTariffPeak: isHighTariffPeak,
+        ),
+      );
+    }
+
+    final kind = profile.advisoryOnly
+        ? ScheduleSuggestionKind.advisory
+        : ScheduleSuggestionKind.schedulable;
+
+    return _buildSuggestion(
+      profile: profile,
+      applianceType: applianceType,
+      dataDaysUsed: dataDaysUsed,
+      peakHour: peakHour,
+      lowHour: lowHour,
+      peakAvg: peakAvg,
+      lowAvg: lowAvg,
+      offDurationHours: offDurationHours,
       suggestedStartHour: suggestedStartHour,
-      suggestedStartMinute: 0,
       suggestedEndHour: suggestedEndHour,
-      suggestedEndMinute: 0,
-      estimatedMonthlySavings: estimatedSavings,
+      peakHoursLabel: peakHoursLabel,
+      kind: kind,
       tariffAdvice:
           'Peak tariff window is 6 AM - 6 PM (${getTariff(peakHour)} tariff detected at peak usage).',
-      applianceAdvice: suggestApplianceUse('Heavy appliances', peakHour),
+      applianceAdvice: ApplianceConfig.adviceFor(
+        profile: profile,
+        peakHours: _formatHourRange(peakHour, offDurationHours),
+        peakHour: peakHour,
+        isHighTariffPeak: isHighTariffPeak,
+      ),
+    );
+  }
+
+  ScheduleSuggestion _buildSuggestion({
+    required ApplianceProfile profile,
+    required ApplianceType applianceType,
+    required int dataDaysUsed,
+    required int peakHour,
+    required int lowHour,
+    required double peakAvg,
+    required double lowAvg,
+    required int offDurationHours,
+    int? suggestedStartHour,
+    int? suggestedEndHour,
+    String? peakHoursLabel,
+    required ScheduleSuggestionKind kind,
+    required String tariffAdvice,
+    required String applianceAdvice,
+  }) {
+    final startHour = suggestedStartHour ?? peakHour;
+    final endHour = suggestedEndHour ?? ((peakHour + offDurationHours) % 24);
+    final peakLabel =
+        peakHoursLabel ?? _formatHourRange(peakHour, offDurationHours);
+
+    final savingsKwh = (peakAvg / 1000) * offDurationHours * 30;
+    final estimatedSavings = kind == ScheduleSuggestionKind.schedulable
+        ? estimateAvoidedCost(savingsKwh)
+        : 0.0;
+
+    final suggestionTitle = kind == ScheduleSuggestionKind.insufficientData
+        ? 'Collecting Usage Data'
+        : kind == ScheduleSuggestionKind.lowPower
+            ? 'Low Power Usage'
+            : '${ApplianceConfig.suggestionTitleFor(profile)}${profile.useFullDayOffWindow ? '' : ': $peakLabel'}';
+
+    final scheduleName = profile.type == ApplianceType.notSet
+        ? 'Smart Suggested OFF'
+        : 'Smart Suggested OFF - ${profile.label}';
+
+    return ScheduleSuggestion(
+      peakHours: peakLabel,
+      lowHours: _formatHourRange(lowHour, ApplianceConfig.defaultOffWindowHours),
+      peakAveragePower: peakAvg,
+      lowAveragePower: lowAvg,
+      suggestedStartHour: startHour,
+      suggestedStartMinute: 0,
+      suggestedEndHour: endHour,
+      suggestedEndMinute: 0,
+      estimatedMonthlySavings: estimatedSavings,
+      tariffAdvice: tariffAdvice,
+      applianceAdvice: applianceAdvice,
+      kind: kind,
+      suggestionTitle: suggestionTitle,
+      scheduleName: scheduleName,
+      dataDaysUsed: dataDaysUsed,
+      applianceType: applianceType,
     );
   }
 

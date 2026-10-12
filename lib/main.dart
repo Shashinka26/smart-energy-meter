@@ -1,11 +1,20 @@
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'firebase_options.dart';
-import 'screens/main_navigation_screen.dart';
+import 'widgets/auth_gate.dart';
+import 'services/usage_notification_service.dart';
 import 'theme/app_theme.dart';
+
+/// Release APK sideload builds use debug App Check so you can register
+/// the token once in Firebase Console → App Check → Debug tokens.
+const _useDebugAppCheck = bool.fromEnvironment(
+  'USE_DEBUG_APP_CHECK',
+  defaultValue: true,
+);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,9 +22,13 @@ Future<void> main() async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   await FirebaseAppCheck.instance.activate(
-    androidProvider: AndroidProvider.debug,
+    androidProvider: _useDebugAppCheck || kDebugMode
+        ? AndroidProvider.debug
+        : AndroidProvider.playIntegrity,
     webProvider: WebDebugProvider(),
   );
+
+  await UsageNotificationService.instance.initialize();
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -36,7 +49,7 @@ class SmartEnergyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Smart Energy',
       theme: AppTheme.dark,
-      home: const MainNavigationScreen(),
+      home: const AuthGate(),
     );
   }
 }
